@@ -1,0 +1,96 @@
+import networkx as nx
+import pandas as pd
+from osgeo import ogr
+import sys
+import json
+from networkx.readwrite import json_graph
+import time
+import numpy as np
+
+road_ds = ogr.Open() # Input pedestrian path layer
+road_lyr = road_ds.GetLayer()
+
+## Get field name of road network
+rfn = [] #road field name
+road_field = road_lyr.GetLayerDefn()
+for n in range(road_field.GetFieldCount()) :
+        name = road_field.GetFieldDefn(n).name
+        rfn.append(name)
+rfn.append('Y')
+rfn.append('X')
+print(road_lyr.GetFeatureCount())
+
+G = nx.Graph()
+
+## Create data frame for saving road information
+road_df = pd.DataFrame(columns=['START_NODE', 'END_NODE', 'COORDINATES', 'LEN_10M', 'NUM'])
+
+## Prepare empty dataset to save an information
+dict_coorToNum = {} # the dictionary to find a node number from coordinates
+dict_numToCoor = {} # the dictionary to find a coordinates from a node number
+key = 0 # row of matrix
+value = 0 # column of matrix
+num = 0
+
+## add node and edge in the enpy graph
+for feat in road_lyr : # call features from a road mayer
+    geom = feat.geometry() # get a geometry from the feature
+    if geom is None :
+        continue
+    attr = [] #attributes
+    l = geom.GetPointCount() # get the number of points of each line
+    x_start = geom.GetX(0) # get the first and last points' coordinates of line
+    x_end = geom.GetX(l-1)
+    y_start = geom.GetY(0)
+    y_end = geom.GetY(l-1)
+    start = str(x_start)+','+str(y_start) # combine the coordinates to save as string
+    end = str(x_end)+','+str(y_end)
+    # if the node (coordinates) is new in the matrix, add it in the matrix
+    if start not in list(dict_coorToNum.keys()) :
+        dict_coorToNum[start] = key # and save the information in the dictionaries
+        dict_numToCoor[key] = start
+        key += 1 # and add the key number
+    if end not in list(dict_coorToNum.keys()) :
+        dict_coorToNum[end] = key
+        dict_numToCoor[key] = end
+        key += 1
+    length = feat.GetField('LEN_10M')
+    f_id = feat.GetField('NUM')
+    # add the edge in the matrix
+    G.add_edge(dict_coorToNum[start], dict_coorToNum[end], LEN_10M = int(round(length)), NUM = int(f_id), 
+               START= (y_start, x_start), END=(y_end, x_end))
+    # get the coordinates of all points of line feature
+    geom_list = [] 
+    for i in range(geom.GetPointCount()) : # call the coordiantes and concatnate them as a string to save
+        geom_list.append(str(geom.GetY(i)) + ',' + str(geom.GetX(i)))
+    geoms = '|'.join(geom_list)
+    # add coordinates information in the data frame
+    row = [dict_coorToNum[start], dict_coorToNum[end], geoms, length, f_id]
+    road_df.loc[num] = row
+    if num % 10000 == 0 :
+        print(num)
+    num += 1
+
+print('finish!') 
+
+## Save the dictionaris as json files
+json_dict_coorToNum = json.dumps(dict_coorToNum)
+f = open(, 'w') # Input path
+f.write(json_dict_coorToNum)
+f.close()
+
+json_dict_numToCoor = json.dumps(dict_numToCoor)
+f = open(, 'w') # Input path
+f.write(json_dict_numToCoor)
+f.close()
+
+road_df.to_json() # Input path
+road_df.to_csv() # Input path
+
+## Save the graph into a json file
+js_graph = json.dumps(json_graph.node_link_data(G))
+f = open(, 'w') # Input path
+f.write(js_graph)
+f.close()
+
+print('finish!')
