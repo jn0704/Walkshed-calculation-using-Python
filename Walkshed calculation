@@ -1,0 +1,123 @@
+import networkx as nx
+import pandas as pd
+from osgeo import ogr
+import sys
+import json
+from networkx.readwrite import json_graph
+import time
+import numpy as np
+
+## read shapefiles
+road_ds = ogr.Open() # Input pedestrin path layer
+road_lyr = road_ds.GetLayer()
+
+## Get field name of road network
+rfn = [] #road field name
+road_field = road_lyr.GetLayerDefn()
+for n in range(road_field.GetFieldCount()) :
+        name = road_field.GetFieldDefn(n).name
+        rfn.append(name)
+rfn.append('Y')
+rfn.append('X')
+
+"""
+Notice!
+If we already have dataset as jsonfiles, we just read these files
+"""
+# read data for analysis
+dict_coorToNum = json.load(open()) # Input path
+dict_numToCoor = json.load(open()) # Input path
+js_G = json.load(open()) # Input path
+G = json_graph.node_link_graph(js_G)
+road_df = pd.read_json() # Input path
+
+"""
+Create numpy array to get cordinatese from edges
+"""
+
+road_df['index'] = (road_df['START_NODE'].map(str) + '.' + road_df['END_NODE'].map(str)).apply(float)
+index = np.array(road_df['index'])
+coords = road_df['COORDINATES']
+length = road_df['LEN_10M'].astype(str)
+values = np.array(pd.concat([coords,length], axis=1))
+
+k = 1
+st = time.time()
+for edge in G.edges() :
+    num = nx.get_edge_attributes(G, 'NUM')[edge]
+    point_1 = edge[0]
+    point_2 = edge[1]
+    try:
+        shed_1 = nx.generators.ego_graph(G, point_1, radius=600, center=True, undirected=False, distance='LEN_10M')
+    except:
+        print('error1: ' + str(point_1))
+
+    try :
+        shed_2 = nx.generators.ego_graph(G, point_2, radius=600, center=True, undirected=False, distance='LEN_10M')
+    except:
+        print('error2: ' + str(point_1))
+
+    for i in shed_2.edges() :
+        shed_1.add_edge(i[0], i[1])
+    shed_geom = ogr.Geometry(ogr.wkbMultiLineString)
+    shed_len = 0
+
+    for e in shed_1.edges() :
+        start = e[0]
+        end = e[1]         
+        try :
+            edge = float(str(start) + '.' + str(end))
+            i = find_index(index, edge)
+            i = i[0][0]
+        except :
+            edge = float(str(end) + '.' + str(start))
+            i = find_index(index, edge)
+            i = i[0][0]
+
+        coord, len_10m = find_values(i, values)
+        geom = ogr.Geometry(ogr.wkbLineString)
+        for i in coord :
+            x = float(i.split(',')[0])
+            y = float(i.split(',')[1])
+            geom.AddPoint(y, x)
+        shed_geom.AddGeometry(geom)
+        shed_len += len_10m
+    feat = ogr.Feature(path_defn)
+    feat.SetField('NUM', int(num))
+    feat.SetField('LEN_10M', float(shed_len))
+    feat.SetGeometry(shed_geom)
+    path_lyr.CreateFeature(feat)
+
+    if k % 10000 == 0 :
+        print(k)
+        et = time.time()
+        print((et-st)/k)
+    k += 1
+
+"""
+In this module we create an empty shapefile to write line features
+"""
+## Create shapefile
+driver = ogr.GetDriverByName('ESRI Shapefile')
+data_source = driver.CreateDataSource() # Input path
+create_lyr = data_source.CreateLayer('Layer name should be same to shapefile name', road_lyr.GetSpatialRef(), ogr.wkbMultiLineString)
+data_source.Destroy()
+
+print('finish')
+
+## Create walkshed path as linestring
+## read shapefile
+path_ds = ogr.Open(, 1) # Input shapefile path
+path_lyr = path_ds.GetLayer() # Input layer name
+path_defn = path_lyr.GetLayerDefn()
+print(path_lyr.GetGeomType() == ogr.wkbLineString)
+
+## set field
+path_lyr.CreateField(ogr.FieldDefn('NUM', ogr.OFTInteger))
+path_lyr.CreateField(ogr.FieldDefn('LEN_10M', ogr.OFTReal))
+
+## close path
+path_ds.Destroy()
+road_ds.Destroy()
+
+print('Finish!')
